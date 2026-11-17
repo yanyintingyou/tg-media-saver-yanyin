@@ -1,12 +1,16 @@
 /*
- * TG Media Saver — fork for Telegram Web K (/k/), directory-once saving.
+ * TG Media Saver — fork for Telegram Web K (/k/) and Web A (/a/), directory-once saving.
  * Based on TG Media Saver by Denis Ermilov (MIT).
  *
  * How it works:
- *  - Telegram /k/ streams media through its own Service Worker at
- *    /k/stream/<urlencoded JSON descriptor>. The descriptor carries the real file
- *    name, size, mime type and DC id. Bytes are only served when the fetch runs in
- *    the PAGE context, so every request goes through `window.fetch`.
+ *  - Both clients stream media through their own Service Worker, and both only serve
+ *    bytes when the fetch runs in the PAGE context, so every request goes through
+ *    `window.fetch`.
+ *      /k/  /k/stream/<urlencoded JSON descriptor>  — descriptor carries name/size/mime,
+ *           ranged 206 responses.
+ *      /a/  /a/progressive/document<id>             — ranged 206, 512KB per part. Swapping
+ *           `progressive` for `download` yields the whole file as one 200 stream, which is
+ *           the endpoint Web A's own "Save as" uses.
  *  - Media URLs are discovered by polling <video>/<audio>/<img> sources.
  *  - Saving: ask for a directory once (File System Access API), then write each
  *    file straight into it. Without FSA, fall back to an in-memory Blob download.
@@ -18,9 +22,13 @@
   const TAG = "[TG Media Saver]";
   const POLL_MS = 600;
   const INLINE = "tgs-inline-btn";
-  const IS_K =
-    typeof location !== "undefined" &&
-    (location.hostname === "webk.telegram.org" || location.pathname.startsWith("/k/"));
+  const CLIENT = (() => {
+    if (typeof location === "undefined") return null;
+    const { hostname, pathname } = location;
+    if (hostname === "webk.telegram.org" || pathname.startsWith("/k/")) return "k";
+    if (hostname === "weba.telegram.org" || pathname.startsWith("/a/")) return "a";
+    return null;
+  })();
 
   let verbose = false;
   const log = (...a) => {
@@ -77,6 +85,23 @@
     return null;
   };
 
+  // /a/progressive/<hash> -> the same file as one whole-file 200 stream.
+  const toDownloadUrl = (url) => {
+    const u = new URL(url, location.href);
+    u.pathname = u.pathname.replace("/progressive/", "/download/");
+    u.searchParams.delete("fileSize");
+    u.searchParams.delete("mimeType");
+    return u.href;
+  };
+
+  const describeSource = (url) => {
+    if (url.includes("/progressive/")) {
+      const id = url.split("/progressive/")[1].split(/[?#]/)[0];
+      return { name: id || null, size: 0, mime: null };
+    }
+    return describeStream(url);
+  };
+
   // ---------- save target ----------
   let dirHandle = null;
 
@@ -125,10 +150,26 @@
   };
 
   // ---------- download engine ----------
+  // Reads the response body into the writable, or into memory when there is none.
+  const pump = async (res, writable, total, onProgress) => {
+    const reader = res.body.getReader();
+    const parts = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (writable) await writable.write(value);
+      else parts.push(value);
+      if (onProgress && total) onProgress(Math.min(received / total, 1));
+    }
+    return parts;
+  };
+
   // Returns the saved file name. Uses the granted directory when available,
   // otherwise falls back to an in-memory Blob.
   const download = async (url, onProgress) => {
-    const meta = describeStream(url);
+    const meta = describeSource(url);
     const base = (meta && meta.name) || `tg-media-${Date.now()}`;
 
     if (/^(blob:|data:)/.test(url)) {
@@ -137,6 +178,35 @@
       await writeOut(blob, finalName);
       if (onProgress) onProgress(1);
       return finalName;
+    }
+
+    // Web A: one request for the whole file. The name is only known once the
+    // response headers arrive (the hash carries no extension).
+    if (url.includes("/progressive/")) {
+      const res = await page.fetch(toDownloadUrl(url));
+      if (res.status !== 200 && res.status !== 206) throw new Error(`HTTP ${res.status}`);
+      const mime = (res.headers.get("Content-Type") || (meta && meta.mime) || "video/mp4").split(";")[0];
+      const total = Number(res.headers.get("Content-Length")) || 0;
+      let finalName = withExt(base, mime);
+      let writable = null;
+      if (dirHandle) {
+        finalName = await freeName(dirHandle, finalName);
+        const fh = await dirHandle.getFileHandle(finalName, { create: true });
+        writable = await fh.createWritable();
+      }
+      try {
+        const parts = await pump(res, writable, total, onProgress);
+        if (writable) {
+          await writable.close();
+        } else {
+          saveBlob(new page.Blob(parts, { type: mime }), finalName);
+        }
+        if (onProgress && !total) onProgress(1);
+        return finalName;
+      } catch (err) {
+        if (writable) await writable.abort().catch(() => {});
+        throw err;
+      }
     }
 
     let writable = null;
@@ -215,7 +285,7 @@
       if (!url || url.startsWith("data:")) return;
       if (el.getAttribute("data-tgs-src") !== url) {
         el.setAttribute("data-tgs-src", url);
-        state.last = { url, kind: el.tagName === "AUDIO" ? "audio" : "video", meta: describeStream(url) };
+        state.last = { url, kind: el.tagName === "AUDIO" ? "audio" : "video", meta: describeSource(url) };
         log("captured", el.tagName, state.last.meta ? state.last.meta.name : url);
         refreshFloating();
       }
@@ -439,6 +509,9 @@
   if (typeof module !== "undefined" && module.exports) {
     module.exports = {
       describeStream,
+      describeSource,
+      toDownloadUrl,
+      client: CLIENT,
       humanSize,
       extFromMime,
       withExt,
@@ -450,8 +523,8 @@
   }
 
   // ---------- boot ----------
-  if (!IS_K) {
-    info("当前不是 Telegram Web K：请打开 https://web.telegram.org/k/ 后使用");
+  if (!CLIENT) {
+    info("当前不是 Telegram Web：请打开 https://web.telegram.org/k/ 或 /a/ 后使用");
     return;
   }
 

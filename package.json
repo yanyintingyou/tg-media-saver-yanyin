@@ -1,11 +1,11 @@
 {
   "name": "tg-media-saver-yanyin",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "engines": {
     "node": ">=18"
   },
-  "description": "Chrome extension that saves video, audio and photos from Telegram Web K, including chats with restricted saving.",
+  "description": "Chrome extension that saves video, audio and photos from Telegram Web K and Web A, including chats with restricted saving.",
   "scripts": {
     "build": "bash scripts/build.sh",
     "test": "node --test test/*.test.js"

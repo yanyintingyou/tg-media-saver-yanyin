@@ -17,7 +17,7 @@ test("build.sh copies src/content.js into the extension", () => {
   assert.ok(a.equals(b), "extension content must match the source of truth");
 });
 
-test("manifest is MV3, MAIN world, document_start, /k/ only, references existing files", () => {
+test("manifest is MV3, MAIN world, document_start, /k/ and /a/ only, references existing files", () => {
   const m = JSON.parse(read("extension/manifest.json"));
   assert.equal(m.manifest_version, 3);
 
@@ -27,6 +27,7 @@ test("manifest is MV3, MAIN world, document_start, /k/ only, references existing
   assert.equal(cs.run_at, "document_start");
   assert.ok(cs.matches.every((x) => x.startsWith("https://")));
   assert.ok(cs.matches.includes("https://web.telegram.org/k/*"), "must target the /k/ client");
+  assert.ok(cs.matches.includes("https://web.telegram.org/a/*"), "must target the /a/ client");
   assert.equal(m.permissions, undefined, "the extension asks for no permissions");
 
   for (const f of cs.js) assert.ok(exists(path.join("extension", f)), `missing ${f}`);

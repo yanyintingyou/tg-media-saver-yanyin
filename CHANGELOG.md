@@ -4,6 +4,26 @@ All notable changes to **TG Media Saver** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-11-17
+
+Web A support.
+
+### Added
+
+- Web A (`web.telegram.org/a/`): media is fetched from `/a/download/<hash>`, the endpoint behind
+  Web A's own "Save as". One request, whole file, streamed into the granted directory.
+- `weba.telegram.org` match pattern alongside `webk.telegram.org`.
+
+### Changed
+
+- Client detection replaces the `/k/`-only guard; both clients share the capture, queue and UI.
+- Manifest name and description cover Web K and Web A.
+
+### Known limits
+
+- Web A saves are named `document<id>.<ext>`: its stream URL carries no file name.
+- Web A photos and file messages stay in-memory blobs with no stream URL, so they are not saved.
+
 ## [1.1.0] - 2026-11-17
 
 Fork for Telegram Web K, extension only.

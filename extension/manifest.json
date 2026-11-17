@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "TG Media Saver (Web K)",
-  "version": "1.1.0",
+  "name": "TG Media Saver (Web K/A)",
+  "version": "1.2.0",
   "minimum_chrome_version": "111",
-  "description": "Save videos, audio and photos from Telegram Web K, including chats with restricted saving. The save directory is granted once.",
+  "description": "Save videos, audio and photos from Telegram Web K and Web A, including chats with restricted saving. The save directory is granted once.",
   "author": "Denis Ermilov (original), fork maintained by yanyintingyou",
   "homepage_url": "https://github.com/yanyintingyou/tg-media-saver-yanyin",
   "icons": {
@@ -15,7 +15,9 @@
     {
       "matches": [
         "https://web.telegram.org/k/*",
-        "https://webk.telegram.org/*"
+        "https://web.telegram.org/a/*",
+        "https://webk.telegram.org/*",
+        "https://weba.telegram.org/*"
       ],
       "js": ["content.js"],
       "run_at": "document_start",
