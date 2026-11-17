@@ -1,35 +1,28 @@
 /*
- * TG Media Saver — original code by Denis Ermilov (MIT).
+ * TG Media Saver — fork for Telegram Web K (/k/), directory-once saving.
+ * Based on TG Media Saver by Denis Ermilov (MIT).
  *
- * Single source of truth for BOTH distribution modes:
- *   - Tampermonkey/Violentmonkey userscript (isolated world, `@grant unsafeWindow`)
- *   - Chrome MV3 extension content script (`"world": "MAIN"`)
- *
- * How it works (the non-obvious parts):
- *  - web.telegram.org has a strict CSP that blocks page-world script injection. Both modes
- *    avoid it: the userscript runs in the isolated world; the extension runs as a
- *    browser-injected MAIN-world content script. Neither is subject to the page CSP.
- *    (On Chrome MV3 the Tampermonkey "Allow user scripts" toggle must also be enabled.)
- *  - Telegram /k/ streams media through its own Service Worker at URLs like
- *    /k/stream/<urlencoded JSON descriptor>. The descriptor holds the real file name, size,
- *    mime type and DC id. To actually receive the bytes, the fetch must run in the PAGE
- *    context (so the Service Worker intercepts it) — that's why every network call goes
- *    through `page.fetch` (unsafeWindow.fetch / window.fetch), not the content-script fetch.
- *  - Media URLs are discovered by polling <video>/<audio> `currentSrc` (the DOM is shared
- *    between worlds, so this works from the isolated world too).
- *  - If Telegram's Service Worker is not serving bytes (e.g. after a network change you'll
- *    see `FetchEvent … rejected` / `ERR_NETWORK_CHANGED` in the console), the page itself
- *    cannot play the file and no userscript/extension can download it — reload / re-login.
+ * How it works:
+ *  - Telegram /k/ streams media through its own Service Worker at
+ *    /k/stream/<urlencoded JSON descriptor>. The descriptor carries the real file
+ *    name, size, mime type and DC id. Bytes are only served when the fetch runs in
+ *    the PAGE context, so every request goes through `window.fetch`.
+ *  - Media URLs are discovered by polling <video>/<audio>/<img> sources.
+ *  - Saving: ask for a directory once (File System Access API), then write each
+ *    file straight into it. Without FSA, fall back to an in-memory Blob download.
  */
-
 (function () {
   "use strict";
 
-  const page = typeof unsafeWindow !== "undefined" && unsafeWindow ? unsafeWindow : window;
+  const page = window;
   const TAG = "[TG Media Saver]";
   const POLL_MS = 600;
-  let verbose = false;
+  const INLINE = "tgs-inline-btn";
+  const IS_K =
+    typeof location !== "undefined" &&
+    (location.hostname === "webk.telegram.org" || location.pathname.startsWith("/k/"));
 
+  let verbose = false;
   const log = (...a) => {
     if (verbose) console.log(TAG, ...a);
   };
@@ -70,7 +63,7 @@
     return /\.[a-z0-9]+$/i.test(name) ? name : `${name}.${ext}`;
   };
 
-  // Parse a Telegram /k/stream/<json> descriptor -> {name,size,mime,dcId} | null
+  // /k/stream/<urlencoded JSON> -> {name,size,mime,dcId} | null
   const describeStream = (url) => {
     try {
       const seg = url.split("/").pop();
@@ -84,7 +77,33 @@
     return null;
   };
 
-  // ---------- download engine ----------
+  // ---------- save target ----------
+  let dirHandle = null;
+
+  // Must run inside a user gesture (click). Kept in memory; lost on reload.
+  const ensureDir = async () => {
+    if (dirHandle) return dirHandle;
+    if (!page.showDirectoryPicker) return null;
+    dirHandle = await page.showDirectoryPicker({ id: "tg-save", mode: "readwrite" });
+    log("directory granted", dirHandle.name);
+    return dirHandle;
+  };
+
+  // name.ext -> "name (1).ext" when taken
+  const freeName = async (dir, name) => {
+    const m = /^(.*?)(\.[^./\\]+)?$/.exec(name);
+    const base = (m && m[1]) || name;
+    const ext = (m && m[2]) || "";
+    for (let n = 0; ; n++) {
+      const candidate = n ? `${base} (${n})${ext}` : name;
+      try {
+        await dir.getFileHandle(candidate); // resolves only when the file exists
+      } catch (_) {
+        return candidate;
+      }
+    }
+  };
+
   const saveBlob = (blob, name) => {
     const u = page.URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -96,29 +115,36 @@
     page.URL.revokeObjectURL(u);
   };
 
-  // Download a media URL. Uses the File System Access API when available (real file name +
-  // streaming straight to disk), otherwise accumulates Range chunks into an in-memory Blob.
+  const writeOut = async (blob, name, writable) => {
+    if (writable) {
+      await writable.write(blob);
+      await writable.close();
+      return;
+    }
+    saveBlob(blob, name);
+  };
+
+  // ---------- download engine ----------
+  // Returns the saved file name. Uses the granted directory when available,
+  // otherwise falls back to an in-memory Blob.
   const download = async (url, onProgress) => {
     const meta = describeStream(url);
-    const name = (meta && meta.name) || `tg-media-${Date.now()}`;
+    const base = (meta && meta.name) || `tg-media-${Date.now()}`;
 
-    // Single-shot sources (MSE blob / data URI) have no Range support.
     if (/^(blob:|data:)/.test(url)) {
       const blob = await (await page.fetch(url)).blob();
-      const finalName = withExt(name, blob.type);
-      saveBlob(blob, finalName);
+      const finalName = withExt(base, blob.type);
+      await writeOut(blob, finalName);
+      if (onProgress) onProgress(1);
       return finalName;
     }
 
     let writable = null;
-    if (page.showSaveFilePicker) {
-      try {
-        const handle = await page.showSaveFilePicker({ suggestedName: withExt(name, meta && meta.mime) });
-        writable = await handle.createWritable();
-      } catch (err) {
-        if (err && err.name === "AbortError") throw err; // user closed the dialog
-        writable = null; // fall back to in-memory blob
-      }
+    let finalName = withExt(base, meta && meta.mime);
+    if (dirHandle) {
+      finalName = await freeName(dirHandle, finalName);
+      const fh = await dirHandle.getFileHandle(finalName, { create: true });
+      writable = await fh.createWritable();
     }
 
     const parts = [];
@@ -131,20 +157,14 @@
         const res = await page.fetch(url, { headers: { Range: `bytes=${offset}-` } });
         if (res.status !== 200 && res.status !== 206) throw new Error(`HTTP ${res.status}`);
         mime = (res.headers.get("Content-Type") || mime).split(";")[0];
-
         const range = res.headers.get("Content-Range");
         const chunk = await res.blob();
 
         if (!range) {
           // Server ignored Range and sent the whole file at once.
-          const finalName = withExt(name, mime);
-          if (writable) {
-            await writable.write(chunk);
-            await writable.close();
-            writable = null;
-          } else {
-            saveBlob(chunk, finalName);
-          }
+          finalName = withExt(base, mime);
+          await writeOut(chunk, finalName, writable);
+          writable = null;
           if (onProgress) onProgress(1);
           return finalName;
         }
@@ -153,7 +173,6 @@
         if (!m) throw new Error(`Malformed Content-Range header: ${range}`);
         const end = Number(m[2]);
         total = Number(m[3]);
-
         if (end + 1 <= offset) throw new Error("Download stalled: server did not advance the offset");
 
         if (writable) await writable.write(chunk);
@@ -168,26 +187,33 @@
         await writable.close();
         writable = null;
       } else {
-        saveBlob(new page.Blob(parts, { type: mime }), withExt(name, mime));
+        finalName = withExt(base, mime);
+        saveBlob(new page.Blob(parts, { type: mime }), finalName);
       }
-      return withExt(name, mime);
+      return finalName;
     } catch (err) {
-      // Release a partially written file so it is not left locked on disk.
       if (writable) await writable.abort().catch(() => {});
       throw err;
     }
   };
 
+  // ---------- queue ----------
+  let chain = Promise.resolve();
+  const enqueue = (task) => {
+    chain = chain.then(task, task);
+    return chain;
+  };
+
   // ---------- capture ----------
   const state = { last: null };
 
-  const mediaUrl = (el) => el && (el.currentSrc || el.getAttribute("data-tgs-src") || el.src || "");
+  const mediaUrl = (el) => (el && (el.currentSrc || el.getAttribute("data-tgs-src") || el.src)) || "";
 
   const capture = () => {
     document.querySelectorAll("video, audio").forEach((el) => {
       const url = mediaUrl(el);
       if (!url || url.startsWith("data:")) return;
-      if (!el.getAttribute("data-tgs-src")) {
+      if (el.getAttribute("data-tgs-src") !== url) {
         el.setAttribute("data-tgs-src", url);
         state.last = { url, kind: el.tagName === "AUDIO" ? "audio" : "video", meta: describeStream(url) };
         log("captured", el.tagName, state.last.meta ? state.last.meta.name : url);
@@ -200,6 +226,12 @@
   let floatBtn = null;
   let floatCap = null;
 
+  const BTN_IDLE = "rgba(80,140,190,0.95)";
+  const BTN_BUSY = "rgba(90,90,90,0.85)";
+  const BTN_OK = "rgba(70,150,90,0.95)";
+  const BTN_ERR = "rgba(170,80,80,0.95)";
+  const BTN_OFF = "rgba(90,90,90,0.5)";
+
   const styles = (el, css) => Object.assign(el.style, css);
 
   const makeButton = (label, title) => {
@@ -211,12 +243,18 @@
     return b;
   };
 
+  const setBtnState = (btn, text, bg) => {
+    btn.textContent = text;
+    btn.style.background = bg;
+    btn.style.cursor = bg === BTN_IDLE ? "pointer" : "default";
+  };
+
   const refreshFloating = () => {
     if (!floatBtn) return;
     const has = !!state.last;
     styles(floatBtn, {
-      cursor: has ? "pointer" : "not-allowed",
-      background: has ? "rgba(80,140,190,0.95)" : "rgba(90,90,90,0.5)",
+      cursor: has ? "pointer" : "default",
+      background: has ? BTN_IDLE : BTN_OFF,
       opacity: has ? "1" : "0.6",
     });
     if (floatCap) {
@@ -227,37 +265,44 @@
     }
   };
 
-  const runDownload = async (url) => {
-    if (!url) return;
-    info("downloading", url);
+  const hint = (err) => {
+    const msg = String((err && err.message) || err);
+    if (/^HTTP \d+/.test(msg)) return `服务器返回 ${msg.slice(5)}`;
+    if (err instanceof TypeError) return "网络中断或 Telegram 的 Service Worker 没在供数据：硬刷新后重试";
+    return msg;
+  };
+
+  const runDownload = async (url, btn) => {
+    if (!url || btn.dataset.busy === "1") return;
+    btn.dataset.busy = "1";
+    setBtnState(btn, "0%", BTN_BUSY);
     try {
-      const name = await download(url, (p) => {
-        if (floatCap) floatCap.textContent = `${Math.round(p * 100)}%`;
-      });
+      const name = await download(url, (p) => setBtnState(btn, `${Math.round(p * 100)}%`, BTN_BUSY));
       info("saved", name);
-      if (floatCap) floatCap.textContent = `✅ ${name}`;
-      setTimeout(refreshFloating, 2500);
+      setBtnState(btn, "✓", BTN_OK);
+      if (btn === floatBtn && floatCap) floatCap.textContent = name;
     } catch (err) {
+      delete btn.dataset.busy;
       if (err && err.name === "AbortError") {
-        refreshFloating();
+        setBtnState(btn, "⬇", BTN_IDLE);
         return;
       }
-      fail("download failed:", err && err.message ? err.message : err);
-      fail(
-        "Hint: if the video also won't PLAY, Telegram's Service Worker isn't serving bytes " +
-          "(look for 'FetchEvent … rejected' / 'ERR_NETWORK_CHANGED'). Stabilize the network, close " +
-          "other web.telegram.org tabs, hard-reload; if needed DevTools → Application → Service Workers " +
-          "→ Unregister → reload (do NOT enable 'Bypass for network')."
-      );
-      if (floatCap) {
-        floatCap.textContent = "⚠ error (see console)";
-        setTimeout(refreshFloating, 3000);
-      }
+      fail("download failed:", hint(err));
+      setBtnState(btn, "✗", BTN_ERR);
+      btn.title = `失败：${hint(err)}（点击重试）`;
+      return;
     }
+    delete btn.dataset.busy;
+  };
+
+  const queueDownload = (url, btn) => {
+    if (!url || !btn || btn.dataset.busy === "1") return;
+    if (page.showDirectoryPicker && !dirHandle) ensureDir().catch(() => {});
+    enqueue(() => runDownload(url, btn));
   };
 
   const buildFloating = () => {
-    floatBtn = makeButton("⬇", "Save the last loaded media");
+    floatBtn = makeButton("⬇", "保存最近加载的媒体");
     styles(floatBtn, {
       position: "fixed",
       left: "14px",
@@ -273,10 +318,10 @@
     });
     floatBtn.addEventListener("click", () => {
       if (!state.last) {
-        info("nothing captured yet — play a video/audio first");
+        info("尚未捕获媒体：先播放一个视频/音频");
         return;
       }
-      runDownload(state.last.url);
+      queueDownload(state.last.url, floatBtn);
     });
 
     floatCap = document.createElement("div");
@@ -303,24 +348,21 @@
     refreshFloating();
   };
 
-  const INLINE = "tgs-inline-btn";
-  const inViewer = (el) => !!el.closest("#MediaViewer, .media-viewer-whole, #StoryViewer, #stories-viewer");
-
-  const attachInline = (host, onClick, title) => {
-    if (getComputedStyle(host).position === "static") host.style.position = "relative";
+  const attachInline = (host, onClick, title, fixed) => {
+    if (!fixed && getComputedStyle(host).position === "static") host.style.position = "relative";
     const b = makeButton("⬇", title);
     b.className = INLINE;
     styles(b, {
-      position: "absolute",
-      top: "6px",
-      right: "6px",
-      zIndex: "40",
+      position: fixed ? "fixed" : "absolute",
+      top: "12px",
+      left: fixed ? "12px" : "auto",
+      right: fixed ? "auto" : "6px",
+      zIndex: fixed ? "2147483647" : "40",
       width: "30px",
       height: "30px",
       borderRadius: "50%",
       border: "none",
-      cursor: "pointer",
-      background: "rgba(0,0,0,0.55)",
+      background: BTN_IDLE,
       color: "#fff",
       fontSize: "15px",
     });
@@ -336,39 +378,54 @@
     document.querySelectorAll("video, audio").forEach((el) => {
       if (el.offsetWidth < 80 || el.offsetHeight < 80) return;
       const host = el.closest(".media, .bubble, .message") || el.parentElement;
-      if (!host || inViewer(host) || host.querySelector("." + INLINE)) return;
+      if (!host || host.querySelector("." + INLINE)) return;
       attachInline(
         host,
         () => {
           const url = mediaUrl(el);
-          if (url) runDownload(url);
-          else info("media not loaded yet — press play, then ⬇");
+          if (url) queueDownload(url, host.querySelector("." + INLINE));
+          else info("媒体还没加载：先播放再点");
         },
-        "Save this media"
+        "保存这个媒体"
       );
     });
 
     document.querySelectorAll(".bubble img, .media img, .message img").forEach((im) => {
       if (im.offsetWidth < 120 || im.offsetHeight < 120) return;
-      if (inViewer(im)) return;
       const host = im.closest(".media, .bubble, .message") || im.parentElement;
       if (!host || host.querySelector("." + INLINE)) return;
       attachInline(
         host,
         () => {
           const url = im.currentSrc || im.src;
-          if (url) runDownload(url);
+          if (url) queueDownload(url, host.querySelector("." + INLINE));
         },
-        "Save this image"
+        "保存这张图片"
       );
     });
+
+    // Fullscreen viewer: fixed button top-left (Telegram puts close on the right).
+    const viewer = document.querySelector("#MediaViewer, .media-viewer-whole");
+    const video = viewer && viewer.querySelector("video");
+    if (video && !viewer.querySelector("." + INLINE)) {
+      attachInline(
+        viewer,
+        () => {
+          const url = mediaUrl(video);
+          if (url) queueDownload(url, viewer.querySelector("." + INLINE));
+          else info("媒体还没加载：先播放再点");
+        },
+        "保存这个媒体",
+        true
+      );
+    }
   };
 
   // ---------- console helpers ----------
   try {
     page.tgSaver = {
-      status: () => ({ last: state.last, verbose }),
-      downloadLast: () => state.last && runDownload(state.last.url),
+      status: () => ({ last: state.last, verbose, dir: dirHandle && dirHandle.name }),
+      downloadLast: () => state.last && queueDownload(state.last.url, floatBtn),
       debug: (v) => {
         verbose = !!v;
         info("verbose logging", verbose);
@@ -378,14 +435,26 @@
     /* ignore */
   }
 
-  // Test hook: expose helpers to Node unit tests. No-op in browsers/userscript
-  // (there `module` is undefined). `download` is exported to test the core engine
-  // against a mocked page.fetch; the DOM/UI code paths are not exported.
+  // Test hook: no-op in browsers (module is undefined there).
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { describeStream, humanSize, extFromMime, withExt, download };
+    module.exports = {
+      describeStream,
+      humanSize,
+      extFromMime,
+      withExt,
+      download,
+      __setDir: (d) => {
+        dirHandle = d;
+      },
+    };
   }
 
   // ---------- boot ----------
+  if (!IS_K) {
+    info("当前不是 Telegram Web K：请打开 https://web.telegram.org/k/ 后使用");
+    return;
+  }
+
   const tick = () => {
     capture();
     decorate();
@@ -394,7 +463,7 @@
   const boot = () => {
     buildFloating();
     setInterval(tick, POLL_MS);
-    info("ready — play a video/audio, then press ⬇ (inline or bottom-left).");
+    info("ready — 播放视频后点 ⬇");
   };
 
   if (document.body) boot();
