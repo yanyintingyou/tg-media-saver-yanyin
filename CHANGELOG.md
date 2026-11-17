@@ -4,6 +4,30 @@ All notable changes to **TG Media Saver** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-11-17
+
+Fork for Telegram Web K, extension only.
+
+### Added
+
+- Directory granted once (`showDirectoryPicker`), then every file is written into it.
+- Serial download queue with per-button progress, ✓ and ✗ states.
+- Save button inside the fullscreen media viewer.
+- Numeric suffix on name conflicts: `name (1).mp4`.
+- `/k/` guard: the script idles on other Telegram clients instead of producing partial files.
+- Chinese README (`README.zh-CN.md`).
+
+### Changed
+
+- Extension targets `web.telegram.org/k/*` and `webk.telegram.org/*` only.
+- `page` resolves to `window`; the `unsafeWindow` branch is gone.
+- `src/content.js` exports `__setDir` for tests to inject a fake directory.
+
+### Removed
+
+- Userscript build (`tg-media-saver.user.js`, `src/userscript.meta.js`).
+- `dist/` zip, toolbar popup, `scripts/make_icons.py`, Russian README, `docs/`.
+
 ## [1.0.1] - 2026-07-26
 
 ### Added
