@@ -53,6 +53,7 @@ The floating button at the bottom-left saves whatever media loaded last.
 - Scan stops after 400 steps, when the chat stops loading history, when you click **Scan** again, or when you switch chats. Long chats take minutes and pull a lot of media.
 - Switching chats clears the list; each chat starts empty.
 - The folder grant lives in memory. After a browser restart, the next save asks again.
+- Video poster frames are skipped: a picture inside a video message is its preview, not a photo.
 - File messages (zip, pdf, epub) are not handled.
 - 2 GB per file, the Telegram upload ceiling.
 - Downloads depend on Telegram's Service Worker. If the video will not play, no tool can save it. Reload the tab, or unregister the service worker in DevTools and reload.

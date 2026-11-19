@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TG Media Saver (Web K/A)",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "minimum_chrome_version": "111",
   "description": "Save videos, audio and photos from Telegram Web K and Web A, including chats with restricted saving. The save directory is granted once.",
   "author": "Denis Ermilov (original), fork maintained by yanyintingyou",

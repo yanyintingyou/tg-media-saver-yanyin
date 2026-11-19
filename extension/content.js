@@ -293,6 +293,24 @@
 
   const mediaUrl = (el) => (el && (el.currentSrc || el.getAttribute("data-tgs-src") || el.src)) || "";
 
+  // A picture living in a video message is that video's poster frame, not a
+  // photo. Both clients keep the poster in the same media block as a <video>, a
+  // preview <canvas>, a play badge or a duration badge; photos carry none of
+  // those. The duration check stays inside the media block, because every
+  // message has a timestamp somewhere in the bubble.
+  const isVideoThumb = (im) => {
+    const src = im.currentSrc || im.src || "";
+    if ([...document.querySelectorAll("video")].some((v) => (v.poster && v.poster === src) || v.currentSrc === src)) return true;
+
+    const media = im.closest(".media-container, .media-inner, .media, .video, .video-container, [class*='video'], [class*='Video']");
+    const scope = media || im.closest(".bubble, .message");
+    if (!scope) return false;
+    if (scope.querySelector("video, canvas")) return true;
+    if (scope.querySelector("[class*='play'], [class*='Play'], [class*='video'], [class*='Video']")) return true;
+    if (media && scope.querySelector("[class*='duration'], [class*='Duration'], [class*='time'], [class*='Time']")) return true;
+    return false;
+  };
+
   const capture = () => {
     document.querySelectorAll("video, audio").forEach((el) => {
       const url = mediaUrl(el);
@@ -572,6 +590,7 @@
 
     document.querySelectorAll(".bubble img, .media img, .message img").forEach((im) => {
       if (im.offsetWidth < 120 || im.offsetHeight < 120) return;
+      if (isVideoThumb(im)) return;
       const host = im.closest(".media, .bubble, .message") || im.parentElement;
       if (!host || host.querySelector("." + INLINE)) return;
       attachInline(
@@ -672,6 +691,7 @@
     // Photos are already-decrypted blobs; nothing to stream, just save the Blob.
     document.querySelectorAll(".bubble img, .media img, .message img").forEach((im) => {
       if (im.offsetWidth < 120 || im.offsetHeight < 120) return;
+      if (isVideoThumb(im)) return;
       const url = im.currentSrc || im.src;
       if (!/^blob:/.test(url || "")) return;
       addItem(url, null, "p");
@@ -748,7 +768,7 @@
       styles(size, { opacity: ".55" });
 
       const status = document.createElement("span");
-      status.textContent = "⬇";
+      status.textContent = "↓";
       status.title = t("rowDownload");
       item.statusEl = status;
       styles(status, { cursor: "pointer", padding: "0 2px" });

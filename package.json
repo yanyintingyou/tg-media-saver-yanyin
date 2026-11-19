@@ -1,6 +1,6 @@
 {
   "name": "tg-media-saver-yanyin",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "private": true,
   "engines": {
     "node": ">=18"

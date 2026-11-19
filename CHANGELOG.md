@@ -4,6 +4,15 @@ All notable changes to **TG Media Saver** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.4] - 2026-11-19
+
+### Fixed
+
+- Video posters were collected as photos (the `photo-N` rows). A picture is now skipped when its
+  media block holds a video, a preview canvas, a play badge or a duration badge, or when the blob
+  equals a `video.poster` / `video.currentSrc`.
+- The per-row download glyph no longer falls back to a tofu box at small sizes.
+
 ## [1.3.3] - 2026-11-19
 
 ### Added
