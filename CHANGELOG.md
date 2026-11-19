@@ -4,6 +4,23 @@ All notable changes to **TG Media Saver** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-11-19
+
+Batch downloading.
+
+### Added
+
+- ☰ panel listing every media the page has rendered, with checkboxes, select all / invert and
+  per-row download.
+- Scan: scrolls the chat upward until history stops loading, collects media that was never
+  rendered, then restores the scroll position.
+- Photos now write into the granted directory as `photo-N.jpg`; previously they fell back to the
+  browser's Save dialog.
+
+### Changed
+
+- `download()` takes an optional name hint, so batch rows keep their list name.
+
 ## [1.2.0] - 2026-11-17
 
 Web A support.

@@ -36,6 +36,11 @@ scripts/build.sh        # copies src/content.js into extension/
 - **Saving.** `showDirectoryPicker` once, then `getFileHandle(name, {create:true})` per file.
   Without the File System Access API the engine falls back to an in-memory Blob.
 - **Queue.** One promise chain serializes downloads so progress states do not interleave.
+- **Batch panel.** Captured URLs are deduped in a `Map` and rendered as checkbox rows. A URL
+  stays downloadable while the tab is open, because both clients address media by hash or
+  descriptor, so items outlive the element being unloaded. `scan()` is the only code that drives
+  the message list: it walks the nearest scrollable ancestor upward until history stops loading,
+  then restores the offset. The list is memory-only.
 
 ## Invariants
 
@@ -55,4 +60,5 @@ bash scripts/build.sh
 ```
 
 Manual check: load `extension/` unpacked, open `/k/` and `/a/`, play a video in each, confirm ⬇
-saves a playable file.
+saves a playable file. Then open ☰, run **Scan**, and confirm the list grows and downloads land
+in the granted folder.

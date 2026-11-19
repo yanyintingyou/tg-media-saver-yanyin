@@ -168,13 +168,27 @@
 
   // Returns the saved file name. Uses the granted directory when available,
   // otherwise falls back to an in-memory Blob.
-  const download = async (url, onProgress) => {
+  const download = async (url, onProgress, nameHint) => {
     const meta = describeSource(url);
-    const base = (meta && meta.name) || `tg-media-${Date.now()}`;
+    const base = (meta && meta.name) || nameHint || `tg-media-${Date.now()}`;
 
     if (/^(blob:|data:)/.test(url)) {
       const blob = await (await page.fetch(url)).blob();
       const finalName = withExt(base, blob.type);
+      if (dirHandle) {
+        const name = await freeName(dirHandle, finalName);
+        const fh = await dirHandle.getFileHandle(name, { create: true });
+        const writable = await fh.createWritable();
+        try {
+          await writable.write(blob);
+          await writable.close();
+        } catch (err) {
+          await writable.abort().catch(() => {});
+          throw err;
+        }
+        if (onProgress) onProgress(1);
+        return name;
+      }
       await writeOut(blob, finalName);
       if (onProgress) onProgress(1);
       return finalName;
@@ -347,7 +361,8 @@
     btn.dataset.busy = "1";
     setBtnState(btn, "0%", BTN_BUSY);
     try {
-      const name = await download(url, (p) => setBtnState(btn, `${Math.round(p * 100)}%`, BTN_BUSY));
+      const name = await download(url, (p) => setBtnState(btn, `${Math.round(p * 100)}%`, BTN_BUSY),
+        (items.get(url) || {}).name);
       info("saved", name);
       setBtnState(btn, "✓", BTN_OK);
       if (btn === floatBtn && floatCap) floatCap.textContent = name;
@@ -491,11 +506,249 @@
     }
   };
 
+  // ---------- batch ----------
+  const items = new Map();
+  let panel = null;
+  let listEl = null;
+  let countEl = null;
+  let dlBtn = null;
+  let scanBtn = null;
+  let renderedCount = -1;
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const kindOf = (tag) => (tag === "AUDIO" ? "音" : "视");
+  let imgSeq = 0;
+
+  const addItem = (url, meta, kind) => {
+    if (!url || items.has(url)) return;
+    const name = (meta && meta.name) || (kind === "图" ? `photo-${++imgSeq}` : "");
+    items.set(url, {
+      url,
+      name,
+      size: (meta && meta.size) || 0,
+      kind,
+      checked: true,
+      statusEl: null,
+    });
+  };
+
+  const collectAll = () => {
+    document.querySelectorAll("video, audio").forEach((el) => {
+      const url = mediaUrl(el);
+      if (!url || url.startsWith("data:")) return;
+      addItem(url, describeSource(url), kindOf(el.tagName));
+    });
+    // Photos are already-decrypted blobs; nothing to stream, just save the Blob.
+    document.querySelectorAll(".bubble img, .media img, .message img").forEach((im) => {
+      if (im.offsetWidth < 120 || im.offsetHeight < 120) return;
+      const url = im.currentSrc || im.src;
+      if (!/^blob:/.test(url || "")) return;
+      addItem(url, null, "图");
+    });
+  };
+
+  const updateCount = () => {
+    const picked = [...items.values()].filter((i) => i.checked).length;
+    countEl.textContent = `已加载 ${items.size} 项`;
+    dlBtn.textContent = `下载选中 (${picked})`;
+    dlBtn.disabled = !picked;
+  };
+
+  const renderPanel = () => {
+    if (!panel) return;
+    renderedCount = items.size;
+    listEl.textContent = "";
+    if (!items.size) {
+      const empty = document.createElement("div");
+      empty.textContent = "还没有媒体。滚一遍会话，或点「扫描」。";
+      styles(empty, { opacity: ".6", padding: "6px 0" });
+      listEl.appendChild(empty);
+    }
+    items.forEach((item) => {
+      const row = document.createElement("div");
+      styles(row, {
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        padding: "3px 0",
+        borderBottom: "1px solid rgba(255,255,255,.08)",
+      });
+
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = item.checked;
+      cb.style.margin = "0";
+      cb.addEventListener("change", () => {
+        item.checked = cb.checked;
+        updateCount();
+      });
+
+      const kind = document.createElement("span");
+      kind.textContent = item.kind;
+      styles(kind, { opacity: ".55", width: "12px" });
+
+      const name = document.createElement("span");
+      name.textContent = item.name || "未命名";
+      name.title = item.name || item.url;
+      styles(name, { flex: "1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" });
+
+      const size = document.createElement("span");
+      size.textContent = humanSize(item.size);
+      styles(size, { opacity: ".55" });
+
+      const status = document.createElement("span");
+      status.textContent = "⬇";
+      status.title = "只下载这个";
+      item.statusEl = status;
+      styles(status, { cursor: "pointer", padding: "0 2px" });
+      status.addEventListener("click", () => enqueue(() => runDownload(item.url, status)));
+
+      row.append(cb, kind, name, size, status);
+      listEl.appendChild(row);
+    });
+    updateCount();
+  };
+
+  const downloadChecked = () => {
+    [...items.values()]
+      .filter((i) => i.checked && i.statusEl)
+      .forEach((i) => enqueue(() => runDownload(i.url, i.statusEl)));
+  };
+
+  // The message list is virtualized, so older media only exists after scrolling
+  // it into view. Scan upward until the list stops loading history, then put the
+  // scroll position back.
+  const findScroller = () => {
+    let el = document.querySelector("video, audio, .bubble, .message");
+    while (el && el !== document.body) {
+      const oy = getComputedStyle(el).overflowY;
+      if (/(auto|scroll)/.test(oy) && el.scrollHeight > el.clientHeight + 80) return el;
+      el = el.parentElement;
+    }
+    return null;
+  };
+
+  const scan = async () => {
+    const el = findScroller();
+    if (!el) {
+      info("找不到消息列表：手动滚一遍也能收集");
+      return;
+    }
+    const saved = el.scrollTop;
+    scanBtn.disabled = true;
+    scanBtn.textContent = "扫描中…";
+    try {
+      for (let i = 0; i < 400; i++) {
+        const heightBefore = el.scrollHeight;
+        el.scrollTop = Math.max(0, el.scrollTop - el.clientHeight * 0.8);
+        await sleep(450);
+        collectAll();
+        if (items.size !== renderedCount) renderPanel();
+        if (el.scrollTop === 0) {
+          await sleep(700);
+          if (el.scrollHeight === heightBefore) break;
+        }
+      }
+    } finally {
+      el.scrollTop = saved;
+      scanBtn.disabled = false;
+      scanBtn.textContent = "扫描";
+      renderPanel();
+    }
+  };
+
+  const batchButton = (label, title, handler) => {
+    const b = makeButton(label, title);
+    styles(b, {
+      background: "rgba(80,140,190,.9)",
+      color: "#fff",
+      border: "none",
+      borderRadius: "6px",
+      padding: "3px 8px",
+      fontSize: "12px",
+      cursor: "pointer",
+    });
+    b.addEventListener("click", handler);
+    return b;
+  };
+
+  const buildBatch = () => {
+    const toggle = makeButton("☰", "批量下载");
+    styles(toggle, {
+      position: "fixed",
+      left: "70px",
+      bottom: "14px",
+      zIndex: "2147483646",
+      width: "46px",
+      height: "46px",
+      borderRadius: "50%",
+      border: "none",
+      color: "#fff",
+      background: "rgba(80,140,190,0.95)",
+      fontSize: "18px",
+      boxShadow: "0 2px 8px rgba(0,0,0,.4)",
+      cursor: "pointer",
+    });
+
+    panel = document.createElement("div");
+    panel.hidden = true;
+    styles(panel, {
+      position: "fixed",
+      left: "14px",
+      bottom: "70px",
+      zIndex: "2147483647",
+      width: "340px",
+      maxHeight: "52vh",
+      overflowY: "auto",
+      background: "rgba(24,24,24,.96)",
+      color: "#eee",
+      borderRadius: "10px",
+      padding: "8px 10px",
+      font: "12px/1.4 system-ui, sans-serif",
+      boxShadow: "0 4px 16px rgba(0,0,0,.5)",
+    });
+
+    const head = document.createElement("div");
+    styles(head, { display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px", flexWrap: "wrap" });
+    countEl = document.createElement("span");
+    countEl.textContent = "已加载 0 项";
+    styles(countEl, { flex: "1", opacity: ".8" });
+
+    scanBtn = batchButton("扫描", "向上滚动会话，把历史里的媒体也收进来", scan);
+    dlBtn = batchButton("下载选中 (0)", "下载勾选的项目", downloadChecked);
+
+    head.append(
+      countEl,
+      batchButton("全选", "全选", () => {
+        items.forEach((i) => { i.checked = true; });
+        renderPanel();
+      }),
+      batchButton("反选", "反选", () => {
+        items.forEach((i) => { i.checked = !i.checked; });
+        renderPanel();
+      }),
+      scanBtn,
+      dlBtn,
+      batchButton("×", "收起", () => { panel.hidden = true; })
+    );
+
+    listEl = document.createElement("div");
+    panel.append(head, listEl);
+    document.body.append(toggle, panel);
+
+    toggle.addEventListener("click", () => {
+      panel.hidden = !panel.hidden;
+      if (!panel.hidden) renderPanel();
+    });
+  };
+
   // ---------- console helpers ----------
   try {
     page.tgSaver = {
-      status: () => ({ last: state.last, verbose, dir: dirHandle && dirHandle.name }),
+      status: () => ({ last: state.last, verbose, dir: dirHandle && dirHandle.name, batch: items.size }),
       downloadLast: () => state.last && queueDownload(state.last.url, floatBtn),
+      scan,
       debug: (v) => {
         verbose = !!v;
         info("verbose logging", verbose);
@@ -530,13 +783,16 @@
 
   const tick = () => {
     capture();
+    collectAll();
     decorate();
+    if (panel && items.size !== renderedCount) renderPanel();
   };
 
   const boot = () => {
     buildFloating();
+    buildBatch();
     setInterval(tick, POLL_MS);
-    info("ready — 播放视频后点 ⬇");
+    info("ready — 播放后点 ⬇ 保存单个，☰ 打开批量列表");
   };
 
   if (document.body) boot();
