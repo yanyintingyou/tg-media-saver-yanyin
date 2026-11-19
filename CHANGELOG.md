@@ -4,6 +4,13 @@ All notable changes to **TG Media Saver** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.1] - 2026-11-19
+
+### Fixed
+
+- The batch panel's checkboxes were native `<input type=checkbox>` elements, which the page CSS
+  flattened to nothing. They are now drawn by hand and the whole row toggles the selection.
+
 ## [1.3.0] - 2026-11-19
 
 Batch downloading.

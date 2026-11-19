@@ -573,16 +573,36 @@
         gap: "6px",
         padding: "3px 0",
         borderBottom: "1px solid rgba(255,255,255,.08)",
+        cursor: "pointer",
       });
 
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = item.checked;
-      cb.style.margin = "0";
-      cb.addEventListener("change", () => {
-        item.checked = cb.checked;
+      // Native checkboxes are restyled into invisibility by the page CSS, so the
+      // box is drawn by hand and the whole row toggles it.
+      const cb = document.createElement("span");
+      const paint = () => {
+        cb.textContent = item.checked ? "✓" : "";
+        styles(cb, {
+          width: "14px",
+          height: "14px",
+          flex: "0 0 14px",
+          lineHeight: "13px",
+          textAlign: "center",
+          fontSize: "11px",
+          color: "#fff",
+          borderRadius: "3px",
+          border: item.checked ? "1px solid #5aa9e6" : "1px solid rgba(255,255,255,.4)",
+          background: item.checked ? "#2f78ad" : "transparent",
+          userSelect: "none",
+        });
+        row.style.background = item.checked ? "rgba(90,169,230,.12)" : "transparent";
+      };
+      const toggle = () => {
+        item.checked = !item.checked;
+        paint();
         updateCount();
-      });
+      };
+      paint();
+      row.addEventListener("click", toggle);
 
       const kind = document.createElement("span");
       kind.textContent = item.kind;
@@ -602,7 +622,10 @@
       status.title = "只下载这个";
       item.statusEl = status;
       styles(status, { cursor: "pointer", padding: "0 2px" });
-      status.addEventListener("click", () => enqueue(() => runDownload(item.url, status)));
+      status.addEventListener("click", (e) => {
+        e.stopPropagation();
+        enqueue(() => runDownload(item.url, status));
+      });
 
       row.append(cb, kind, name, size, status);
       listEl.appendChild(row);
