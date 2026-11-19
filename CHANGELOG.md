@@ -4,6 +4,14 @@ All notable changes to **TG Media Saver** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.0] - 2026-11-19
+
+### Added
+
+- Scan collects unplayed videos. An unplayed video exists only as a poster, so scanning now
+  presses the poster, waits for the stream URL to appear, closes the viewer and keeps the URL.
+  Each probe takes a couple of seconds; posters are marked so nothing is opened twice.
+
 ## [1.3.4] - 2026-11-19
 
 ### Fixed

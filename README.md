@@ -18,7 +18,7 @@ trimmed to the Chrome extension and tuned for saving a handful of files.
 | Directory granted once | `showDirectoryPicker` runs on the first save; later files land in the same folder without dialogs |
 | Serial queue | Clicking several buttons downloads them one after another, each with its own progress state |
 | Batch panel (☰) | Every media the page has rendered lands in a checkable list: select all, invert, or save one row. Downloads still go through the serial queue |
-| Scan history | Scrolls the chat upward until it stops loading, so media that was never rendered gets collected, then puts the position back. Click again to stop |
+| Scan history | Scrolls the chat upward and opens each unplayed video poster, so those videos enter the list as well; puts the position back at the end. Click again to stop |
 | Save button in the fullscreen viewer | Opening a video full screen is the usual path; the button sits top-left |
 | Name conflicts get ` (1)`, ` (2)` | Telegram media often repeats names across chats |
 | English UI by default, 中/EN toggle | The panel labels are translated; the choice is stored in `localStorage` |
@@ -53,7 +53,7 @@ The floating button at the bottom-left saves whatever media loaded last.
 - Scan stops after 400 steps, when the chat stops loading history, when you click **Scan** again, or when you switch chats. Long chats take minutes and pull a lot of media.
 - Switching chats clears the list; each chat starts empty.
 - The folder grant lives in memory. After a browser restart, the next save asks again.
-- Video poster frames are skipped: a picture inside a video message is its preview, not a photo.
+- Video poster frames are never saved as photos: a picture inside a video message is its preview. Scan opens the poster to collect the video itself.
 - File messages (zip, pdf, epub) are not handled.
 - 2 GB per file, the Telegram upload ceiling.
 - Downloads depend on Telegram's Service Worker. If the video will not play, no tool can save it. Reload the tab, or unregister the service worker in DevTools and reload.
