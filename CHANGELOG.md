@@ -4,6 +4,14 @@ All notable changes to **TG Media Saver** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.2] - 2026-11-19
+
+### Fixed
+
+- Switching chats clears the batch list and the last-media shortcut; the peer comes from the
+  location hash and is polled on every tick, so `history.replaceState` switches are caught too.
+- Scan can be stopped by clicking **Scan** again, and aborts on its own when the chat changes.
+
 ## [1.3.1] - 2026-11-19
 
 ### Fixed

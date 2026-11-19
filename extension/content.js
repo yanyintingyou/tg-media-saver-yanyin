@@ -514,11 +514,41 @@
   let dlBtn = null;
   let scanBtn = null;
   let renderedCount = -1;
+  let scanning = false;
+  let scanStop = false;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  const kindOf = (tag) => (tag === "AUDIO" ? "音" : "视");
+  // Both clients keep the current peer in the location hash (`#@name`, `#-100...`).
+  // Switching chats has to drop the previous list, otherwise the panel keeps
+  // showing media from the conversation the user already left.
+  const peerFromHash = () => {
+    if (typeof location === "undefined") return "";
+    const h = (location.hash || "").replace(/^#/, "");
+    if (!h) return "";
+    if (h.startsWith("?")) return null;
+    return h.split("?")[0];
+  };
+  let session = peerFromHash() || "";
   let imgSeq = 0;
+
+  const dropList = () => {
+    items.clear();
+    imgSeq = 0;
+    renderedCount = -1;
+    state.last = null;
+    if (panel && !panel.hidden) renderPanel();
+  };
+
+  const syncSession = () => {
+    const now = peerFromHash();
+    if (now === null || now === session) return;
+    session = now;
+    scanStop = true;
+    dropList();
+  };
+
+  const kindOf = (tag) => (tag === "AUDIO" ? "音" : "视");
 
   const addItem = (url, meta, kind) => {
     if (!url || items.has(url)) return;
@@ -653,28 +683,40 @@
   };
 
   const scan = async () => {
+    if (scanning) {
+      scanStop = true;
+      scanBtn.textContent = "停止中…";
+      return;
+    }
     const el = findScroller();
     if (!el) {
       info("找不到消息列表：手动滚一遍也能收集");
       return;
     }
     const saved = el.scrollTop;
-    scanBtn.disabled = true;
-    scanBtn.textContent = "扫描中…";
+    const scanSession = session;
+    scanning = true;
+    scanStop = false;
+    scanBtn.disabled = false;
+    scanBtn.textContent = "停止";
     try {
       for (let i = 0; i < 400; i++) {
+        if (scanStop) break;
         const heightBefore = el.scrollHeight;
         el.scrollTop = Math.max(0, el.scrollTop - el.clientHeight * 0.8);
         await sleep(450);
+        if (scanStop) break;
         collectAll();
         if (items.size !== renderedCount) renderPanel();
         if (el.scrollTop === 0) {
           await sleep(700);
+          if (scanStop) break;
           if (el.scrollHeight === heightBefore) break;
         }
       }
     } finally {
-      el.scrollTop = saved;
+      scanning = false;
+      if (session === scanSession) el.scrollTop = saved;
       scanBtn.disabled = false;
       scanBtn.textContent = "扫描";
       renderPanel();
@@ -738,7 +780,7 @@
     countEl.textContent = "已加载 0 项";
     styles(countEl, { flex: "1", opacity: ".8" });
 
-    scanBtn = batchButton("扫描", "向上滚动会话，把历史里的媒体也收进来", scan);
+    scanBtn = batchButton("扫描", "向上滚动会话收集历史媒体，运行中再点一次停止", scan);
     dlBtn = batchButton("下载选中 (0)", "下载勾选的项目", downloadChecked);
 
     head.append(
@@ -805,6 +847,7 @@
   }
 
   const tick = () => {
+    syncSession();
     capture();
     collectAll();
     decorate();
@@ -814,6 +857,7 @@
   const boot = () => {
     buildFloating();
     buildBatch();
+    window.addEventListener("hashchange", syncSession);
     setInterval(tick, POLL_MS);
     info("ready — 播放后点 ⬇ 保存单个，☰ 打开批量列表");
   };
