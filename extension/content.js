@@ -360,7 +360,7 @@
       scan: "Scan",
       stop: "Stop",
       stopping: "Stopping…",
-      scanTitle: "Scroll up to collect older media; click again to stop",
+      scanTitle: "Scroll up and open each poster to collect unplayed videos; click again to stop",
       downloadSelected: (n) => `Download selected (${n})`,
       downloadSelectedTitle: "Download the ticked items",
       selectAll: "All",
@@ -391,7 +391,7 @@
       scan: "扫描",
       stop: "停止",
       stopping: "停止中…",
-      scanTitle: "向上滚动会话收集历史媒体，运行中再点一次停止",
+      scanTitle: "向上滚动并逐个打开封面，把未播放的视频也收进来；再点一次停止",
       downloadSelected: (n) => `下载选中 (${n})`,
       downloadSelectedTitle: "下载勾选的项目",
       selectAll: "全选",
@@ -820,6 +820,80 @@
     return null;
   };
 
+  // An unplayed video exists only as a poster; its stream URL is created when
+  // the player opens. Probing clicks the poster, waits for the new <video>,
+  // closes the viewer and keeps the URL.
+  const closeViewer = () => {
+    const btn = document.querySelector(
+      '#MediaViewer [aria-label="Close"], .MediaViewer [aria-label="Close"], [class*="MediaViewer"] [aria-label="Close"], .media-viewer-whole [aria-label="Close"]'
+    );
+    if (btn) {
+      btn.click();
+      return;
+    }
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true }));
+  };
+
+  const previewTargets = () => {
+    const blocks = new Set();
+    document.querySelectorAll(".bubble, .message").forEach((el) => blocks.add(el.closest(".bubble") || el));
+    return [...blocks].flatMap((block) => {
+      if (block.dataset.tgsProbe || block.querySelector("video")) return [];
+      const media = block.querySelector(".media-container, .media-inner, .media");
+      const poster = media && media.querySelector("img[src^='blob:'], canvas");
+      if (!poster) return [];
+      const play = block.querySelector("canvas[aria-label], [class*='play'], [class*='Play']");
+      const timed = media.querySelector("[class*='duration'], [class*='Duration'], [class*='time'], [class*='Time']");
+      return play || timed ? [{ block, target: poster }] : [];
+    });
+  };
+
+  // A bare .click() misses handlers bound to pointer events, so the whole press
+  // sequence goes out. Both clients open the viewer from a plain click.
+  const press = (el) => {
+    const base = { bubbles: true, cancelable: true, view: window, button: 0 };
+    const pointer = typeof PointerEvent === "function";
+    const fire = (type) =>
+      el.dispatchEvent(
+        type.startsWith("pointer") && pointer
+          ? new PointerEvent(type, { ...base, pointerId: 1, isPrimary: true, pointerType: "mouse" })
+          : new MouseEvent(type, base)
+      );
+    ["pointerdown", "mousedown", "pointerup", "mouseup"].forEach(fire);
+    el.dispatchEvent(new MouseEvent("click", base));
+  };
+
+  const waitForStream = async (before, timeout = 2500) => {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      const v = [...document.querySelectorAll("video")].find((el) => {
+        const u = el.currentSrc || el.src;
+        return u && !before.has(u) && /\/(k\/stream|progressive)\//.test(u);
+      });
+      if (v) return v.currentSrc;
+      await sleep(150);
+    }
+    return "";
+  };
+
+  const probeBlock = async ({ block, target }) => {
+    const before = new Set([...document.querySelectorAll("video")].map((v) => v.currentSrc || v.src).filter(Boolean));
+    press(target);
+    const url = await waitForStream(before);
+    closeViewer();
+    await sleep(700);
+    if (scanStop) return;
+    block.dataset.tgsProbe = "1";
+    if (url) addItem(url, describeSource(url), "v");
+  };
+
+  const probeVisible = async () => {
+    for (const item of previewTargets()) {
+      if (scanStop) return;
+      await probeBlock(item);
+    }
+  };
+
   const scan = async () => {
     if (scanning) {
       scanStop = true;
@@ -840,8 +914,10 @@
     try {
       for (let i = 0; i < 400; i++) {
         if (scanStop) break;
+        await probeVisible();
+        if (scanStop) break;
         const heightBefore = el.scrollHeight;
-        el.scrollTop = Math.max(0, el.scrollTop - el.clientHeight * 0.8);
+        el.scrollTop = Math.max(0, el.scrollTop - el.clientHeight * 0.6);
         await sleep(450);
         if (scanStop) break;
         collectAll();
