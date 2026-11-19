@@ -4,6 +4,13 @@ All notable changes to **TG Media Saver** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.3] - 2026-11-19
+
+### Added
+
+- Bilingual UI, English by default. The 中 / EN button in the panel switches language and the
+  choice is stored in `localStorage`; titles, row labels, empty state and error hints follow.
+
 ## [1.3.2] - 2026-11-19
 
 ### Fixed

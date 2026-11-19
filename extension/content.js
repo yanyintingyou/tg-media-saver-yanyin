@@ -327,6 +327,99 @@
     return b;
   };
 
+  // ---------- i18n ----------
+  // English is the default; the choice is stored per browser.
+  const LANG_KEY = "tms-lang";
+  const STRINGS = {
+    en: {
+      batchOpen: "Batch download",
+      floatSave: "Save the last loaded media",
+      saveMedia: "Save this media",
+      savePhoto: "Save this photo",
+      playFirst: "Media not loaded yet: play it first",
+      nothingCaptured: "Nothing captured yet: play a video or audio",
+      loaded: (n) => `Loaded ${n}`,
+      scan: "Scan",
+      stop: "Stop",
+      stopping: "Stopping…",
+      scanTitle: "Scroll up to collect older media; click again to stop",
+      downloadSelected: (n) => `Download selected (${n})`,
+      downloadSelectedTitle: "Download the ticked items",
+      selectAll: "All",
+      invert: "Invert",
+      close: "Close",
+      empty: "Nothing yet. Scroll the chat, or press Scan.",
+      untitled: "untitled",
+      rowDownload: "Download only this one",
+      kindV: "V",
+      kindA: "A",
+      kindP: "P",
+      failTitle: (m) => `Failed: ${m} (click to retry)`,
+      httpErr: (c) => `Server returned ${c}`,
+      netErr: "Network dropped, or Telegram's Service Worker stopped serving: hard-reload and retry",
+      noScroller: "Message list not found; scrolling manually also collects media",
+      notTelegram: "Not Telegram Web: open https://web.telegram.org/k/ or /a/",
+      ready: "ready — ⬇ saves one file, ☰ opens the batch list",
+      langSwitch: "Switch to Chinese",
+    },
+    zh: {
+      batchOpen: "批量下载",
+      floatSave: "保存最近加载的媒体",
+      saveMedia: "保存这个媒体",
+      savePhoto: "保存这张图片",
+      playFirst: "媒体还没加载：先播放再点",
+      nothingCaptured: "尚未捕获媒体：先播放一个视频/音频",
+      loaded: (n) => `已加载 ${n} 项`,
+      scan: "扫描",
+      stop: "停止",
+      stopping: "停止中…",
+      scanTitle: "向上滚动会话收集历史媒体，运行中再点一次停止",
+      downloadSelected: (n) => `下载选中 (${n})`,
+      downloadSelectedTitle: "下载勾选的项目",
+      selectAll: "全选",
+      invert: "反选",
+      close: "收起",
+      empty: "还没有媒体。滚一遍会话，或点「扫描」。",
+      untitled: "未命名",
+      rowDownload: "只下载这个",
+      kindV: "视",
+      kindA: "音",
+      kindP: "图",
+      failTitle: (m) => `失败：${m}（点击重试）`,
+      httpErr: (c) => `服务器返回 ${c}`,
+      netErr: "网络中断或 Telegram 的 Service Worker 没在供数据：硬刷新后重试",
+      noScroller: "找不到消息列表：手动滚一遍也能收集",
+      notTelegram: "当前不是 Telegram Web：请打开 https://web.telegram.org/k/ 或 /a/ 后使用",
+      ready: "准备就绪 — ⬇ 保存单个，☰ 打开批量列表",
+      langSwitch: "切换到英文",
+    },
+  };
+
+  let lang = "en";
+  try {
+    if (localStorage.getItem(LANG_KEY) === "zh") lang = "zh";
+  } catch (_) {
+    /* storage blocked: stay on the default */
+  }
+
+  const t = (key, arg) => {
+    const v = (STRINGS[lang] && STRINGS[lang][key]) || STRINGS.en[key] || key;
+    return typeof v === "function" ? v(arg) : v;
+  };
+
+  // Elements that outlive a language switch carry their key, so relabelling is a
+  // single pass instead of rebuilding them.
+  const tagTitle = (el, key) => {
+    el.dataset.tmsTitle = key;
+    el.title = t(key);
+    el.setAttribute("aria-label", el.title);
+  };
+
+  const tagText = (el, key) => {
+    el.dataset.tmsText = key;
+    el.textContent = t(key);
+  };
+
   const setBtnState = (btn, text, bg) => {
     btn.textContent = text;
     btn.style.background = bg;
@@ -351,8 +444,8 @@
 
   const hint = (err) => {
     const msg = String((err && err.message) || err);
-    if (/^HTTP \d+/.test(msg)) return `服务器返回 ${msg.slice(5)}`;
-    if (err instanceof TypeError) return "网络中断或 Telegram 的 Service Worker 没在供数据：硬刷新后重试";
+    if (/^HTTP \d+/.test(msg)) return t("httpErr", msg.slice(5));
+    if (err instanceof TypeError) return t("netErr");
     return msg;
   };
 
@@ -374,7 +467,7 @@
       }
       fail("download failed:", hint(err));
       setBtnState(btn, "✗", BTN_ERR);
-      btn.title = `失败：${hint(err)}（点击重试）`;
+      btn.title = t("failTitle", hint(err));
       return;
     }
     delete btn.dataset.busy;
@@ -387,7 +480,8 @@
   };
 
   const buildFloating = () => {
-    floatBtn = makeButton("⬇", "保存最近加载的媒体");
+    floatBtn = makeButton("⬇", t("floatSave"));
+    tagTitle(floatBtn, "floatSave");
     styles(floatBtn, {
       position: "fixed",
       left: "14px",
@@ -403,7 +497,7 @@
     });
     floatBtn.addEventListener("click", () => {
       if (!state.last) {
-        info("尚未捕获媒体：先播放一个视频/音频");
+        info(t("nothingCaptured"));
         return;
       }
       queueDownload(state.last.url, floatBtn);
@@ -433,9 +527,10 @@
     refreshFloating();
   };
 
-  const attachInline = (host, onClick, title, fixed) => {
+  const attachInline = (host, onClick, titleKey, fixed) => {
     if (!fixed && getComputedStyle(host).position === "static") host.style.position = "relative";
-    const b = makeButton("⬇", title);
+    const b = makeButton("⬇", t(titleKey));
+    tagTitle(b, titleKey);
     b.className = INLINE;
     styles(b, {
       position: fixed ? "fixed" : "absolute",
@@ -469,9 +564,9 @@
         () => {
           const url = mediaUrl(el);
           if (url) queueDownload(url, host.querySelector("." + INLINE));
-          else info("媒体还没加载：先播放再点");
+          else info(t("playFirst"));
         },
-        "保存这个媒体"
+        "saveMedia"
       );
     });
 
@@ -485,7 +580,7 @@
           const url = im.currentSrc || im.src;
           if (url) queueDownload(url, host.querySelector("." + INLINE));
         },
-        "保存这张图片"
+        "savePhoto"
       );
     });
 
@@ -498,9 +593,9 @@
         () => {
           const url = mediaUrl(video);
           if (url) queueDownload(url, viewer.querySelector("." + INLINE));
-          else info("媒体还没加载：先播放再点");
+          else info(t("playFirst"));
         },
-        "保存这个媒体",
+        "saveMedia",
         true
       );
     }
@@ -513,6 +608,11 @@
   let countEl = null;
   let dlBtn = null;
   let scanBtn = null;
+  let toggleBtn = null;
+  let selAllBtn = null;
+  let invBtn = null;
+  let closeBtn = null;
+  let langBtn = null;
   let renderedCount = -1;
   let scanning = false;
   let scanStop = false;
@@ -548,11 +648,11 @@
     dropList();
   };
 
-  const kindOf = (tag) => (tag === "AUDIO" ? "音" : "视");
+  const kindOf = (tag) => (tag === "AUDIO" ? "a" : "v");
 
   const addItem = (url, meta, kind) => {
     if (!url || items.has(url)) return;
-    const name = (meta && meta.name) || (kind === "图" ? `photo-${++imgSeq}` : "");
+    const name = (meta && meta.name) || (kind === "p" ? `photo-${++imgSeq}` : "");
     items.set(url, {
       url,
       name,
@@ -574,14 +674,14 @@
       if (im.offsetWidth < 120 || im.offsetHeight < 120) return;
       const url = im.currentSrc || im.src;
       if (!/^blob:/.test(url || "")) return;
-      addItem(url, null, "图");
+      addItem(url, null, "p");
     });
   };
 
   const updateCount = () => {
     const picked = [...items.values()].filter((i) => i.checked).length;
-    countEl.textContent = `已加载 ${items.size} 项`;
-    dlBtn.textContent = `下载选中 (${picked})`;
+    countEl.textContent = t("loaded", items.size);
+    dlBtn.textContent = t("downloadSelected", picked);
     dlBtn.disabled = !picked;
   };
 
@@ -591,7 +691,7 @@
     listEl.textContent = "";
     if (!items.size) {
       const empty = document.createElement("div");
-      empty.textContent = "还没有媒体。滚一遍会话，或点「扫描」。";
+      empty.textContent = t("empty");
       styles(empty, { opacity: ".6", padding: "6px 0" });
       listEl.appendChild(empty);
     }
@@ -635,11 +735,11 @@
       row.addEventListener("click", toggle);
 
       const kind = document.createElement("span");
-      kind.textContent = item.kind;
+      kind.textContent = t("kind" + item.kind.toUpperCase());
       styles(kind, { opacity: ".55", width: "12px" });
 
       const name = document.createElement("span");
-      name.textContent = item.name || "未命名";
+      name.textContent = item.name || t("untitled");
       name.title = item.name || item.url;
       styles(name, { flex: "1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" });
 
@@ -649,7 +749,7 @@
 
       const status = document.createElement("span");
       status.textContent = "⬇";
-      status.title = "只下载这个";
+      status.title = t("rowDownload");
       item.statusEl = status;
       styles(status, { cursor: "pointer", padding: "0 2px" });
       status.addEventListener("click", (e) => {
@@ -661,6 +761,24 @@
       listEl.appendChild(row);
     });
     updateCount();
+  };
+
+  const applyLang = () => {
+    document.querySelectorAll("[data-tms-title]").forEach((el) => {
+      el.title = t(el.dataset.tmsTitle);
+      el.setAttribute("aria-label", el.title);
+    });
+    document.querySelectorAll("[data-tms-text]").forEach((el) => {
+      el.textContent = t(el.dataset.tmsText);
+    });
+    if (langBtn) {
+      langBtn.textContent = lang === "en" ? "中" : "EN";
+      langBtn.title = t("langSwitch");
+      langBtn.setAttribute("aria-label", langBtn.title);
+    }
+    if (countEl) updateCount();
+    if (scanBtn && scanning) scanBtn.textContent = scanStop ? t("stopping") : t("stop");
+    if (panel && !panel.hidden) renderPanel();
   };
 
   const downloadChecked = () => {
@@ -685,12 +803,12 @@
   const scan = async () => {
     if (scanning) {
       scanStop = true;
-      scanBtn.textContent = "停止中…";
+      scanBtn.textContent = t("stopping");
       return;
     }
     const el = findScroller();
     if (!el) {
-      info("找不到消息列表：手动滚一遍也能收集");
+      info(t("noScroller"));
       return;
     }
     const saved = el.scrollTop;
@@ -698,7 +816,7 @@
     scanning = true;
     scanStop = false;
     scanBtn.disabled = false;
-    scanBtn.textContent = "停止";
+    scanBtn.textContent = t("stop");
     try {
       for (let i = 0; i < 400; i++) {
         if (scanStop) break;
@@ -718,7 +836,7 @@
       scanning = false;
       if (session === scanSession) el.scrollTop = saved;
       scanBtn.disabled = false;
-      scanBtn.textContent = "扫描";
+      scanBtn.textContent = t("scan");
       renderPanel();
     }
   };
@@ -739,8 +857,9 @@
   };
 
   const buildBatch = () => {
-    const toggle = makeButton("☰", "批量下载");
-    styles(toggle, {
+    toggleBtn = makeButton("☰", t("batchOpen"));
+    tagTitle(toggleBtn, "batchOpen");
+    styles(toggleBtn, {
       position: "fixed",
       left: "70px",
       bottom: "14px",
@@ -763,7 +882,7 @@
       left: "14px",
       bottom: "70px",
       zIndex: "2147483647",
-      width: "340px",
+      width: "380px",
       maxHeight: "52vh",
       overflowY: "auto",
       background: "rgba(24,24,24,.96)",
@@ -777,32 +896,50 @@
     const head = document.createElement("div");
     styles(head, { display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px", flexWrap: "wrap" });
     countEl = document.createElement("span");
-    countEl.textContent = "已加载 0 项";
+    countEl.textContent = t("loaded", 0);
     styles(countEl, { flex: "1", opacity: ".8" });
 
-    scanBtn = batchButton("扫描", "向上滚动会话收集历史媒体，运行中再点一次停止", scan);
-    dlBtn = batchButton("下载选中 (0)", "下载勾选的项目", downloadChecked);
+    selAllBtn = batchButton(t("selectAll"), t("selectAll"), () => {
+      items.forEach((i) => { i.checked = true; });
+      renderPanel();
+    });
+    tagText(selAllBtn, "selectAll");
+    tagTitle(selAllBtn, "selectAll");
 
-    head.append(
-      countEl,
-      batchButton("全选", "全选", () => {
-        items.forEach((i) => { i.checked = true; });
-        renderPanel();
-      }),
-      batchButton("反选", "反选", () => {
-        items.forEach((i) => { i.checked = !i.checked; });
-        renderPanel();
-      }),
-      scanBtn,
-      dlBtn,
-      batchButton("×", "收起", () => { panel.hidden = true; })
-    );
+    invBtn = batchButton(t("invert"), t("invert"), () => {
+      items.forEach((i) => { i.checked = !i.checked; });
+      renderPanel();
+    });
+    tagText(invBtn, "invert");
+    tagTitle(invBtn, "invert");
+
+    scanBtn = batchButton(t("scan"), t("scanTitle"), scan);
+    tagText(scanBtn, "scan");
+    tagTitle(scanBtn, "scanTitle");
+
+    dlBtn = batchButton(t("downloadSelected", 0), t("downloadSelectedTitle"), downloadChecked);
+    tagTitle(dlBtn, "downloadSelectedTitle");
+
+    langBtn = batchButton(lang === "en" ? "中" : "EN", t("langSwitch"), () => {
+      lang = lang === "en" ? "zh" : "en";
+      try {
+        localStorage.setItem(LANG_KEY, lang);
+      } catch (_) {
+        /* storage blocked: switch still applies for this page */
+      }
+      applyLang();
+    });
+
+    closeBtn = batchButton("×", t("close"), () => { panel.hidden = true; });
+    tagTitle(closeBtn, "close");
+
+    head.append(countEl, selAllBtn, invBtn, scanBtn, dlBtn, langBtn, closeBtn);
 
     listEl = document.createElement("div");
     panel.append(head, listEl);
-    document.body.append(toggle, panel);
+    document.body.append(toggleBtn, panel);
 
-    toggle.addEventListener("click", () => {
+    toggleBtn.addEventListener("click", () => {
       panel.hidden = !panel.hidden;
       if (!panel.hidden) renderPanel();
     });
@@ -842,7 +979,7 @@
 
   // ---------- boot ----------
   if (!CLIENT) {
-    info("当前不是 Telegram Web：请打开 https://web.telegram.org/k/ 或 /a/ 后使用");
+    info(t("notTelegram"));
     return;
   }
 
@@ -859,7 +996,7 @@
     buildBatch();
     window.addEventListener("hashchange", syncSession);
     setInterval(tick, POLL_MS);
-    info("ready — 播放后点 ⬇ 保存单个，☰ 打开批量列表");
+    info(t("ready"));
   };
 
   if (document.body) boot();

@@ -21,6 +21,7 @@ trimmed to the Chrome extension and tuned for saving a handful of files.
 | Scan history | Scrolls the chat upward until it stops loading, so media that was never rendered gets collected, then puts the position back. Click again to stop |
 | Save button in the fullscreen viewer | Opening a video full screen is the usual path; the button sits top-left |
 | Name conflicts get ` (1)`, ` (2)` | Telegram media often repeats names across chats |
+| English UI by default, 中/EN toggle | The panel labels are translated; the choice is stored in `localStorage` |
 | Popup removed | It only repeated the README; fewer files to audit |
 
 ## Install
@@ -37,6 +38,8 @@ Chrome may warn about developer-mode extensions after a restart. Keep the extens
 2. Click the ⬇ button on the media, or the one at the top-left of the fullscreen viewer.
 3. Pick a folder on the first save. Later files land there with their Telegram names; Web A has no name in its stream URL, so those files are named `document<id>.mp4`.
 4. The button shows a percentage, then ✓. A red ✗ means the download failed; click to retry.
+The interface is English on first run; the **中 / EN** button in the panel switches it and remembers the choice.
+
 5. Press ☰ for the batch list: tick the items, hit **Download selected**, and they run one by one with per-row status. **Scan** walks the chat upward to collect media you never scrolled past.
 
 The floating button at the bottom-left saves whatever media loaded last.
